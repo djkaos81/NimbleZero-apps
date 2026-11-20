@@ -1,0 +1,13 @@
+Package: nz-snake
+Version: 0.2.0~dev1
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Installed-Size: 13
+Section: games
+Priority: optional
+NZ-Title: Snake
+NZ-Contents: 
+Description: Snake for the Cardputer Zero keyboard and screen
+Filename: nz-snake_0.2.0~dev1_arm64.deb
+Size: 6064
+SHA256: 9dc396b0cef1422b76fb5437fab352ca4b940819342d0f9eb87b7566ed99f8a0
