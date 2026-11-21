@@ -1,0 +1,13 @@
+Package: nz-player
+Version: 0.1.1
+Architecture: arm64
+Maintainer: NimbleZero <88841154+djkaos81@users.noreply.github.com>
+Depends: libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2
+Installed-Size: 116
+Section: misc
+Priority: optional
+Description: Media Player
+ Movies and IPTV
+Filename: nz-player_0.1.1_arm64.deb
+Size: 40866
+SHA256: fe8d6ccac63297e3185f22b0c4a870ab1b691b8f64a748124525db5207dfa5c8
