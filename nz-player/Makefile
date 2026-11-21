@@ -37,7 +37,9 @@ sim: $(SRC) $(HDR)
 
 deb: $(NAME)
 	./nz-mkdeb --name $(NAME) --version $(VERSION) --exec $(NAME) --title "Media Player" \
-		--comment "Movies and IPTV" --depends "libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2"
+		--comment "Movies and IPTV" --section video \
+		--description "Movie and IPTV player: local files and .m3u channel lists" \
+		--depends "libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2"
 
 check: sim
 	tests/run-tests.sh ./$(NAME)-sim

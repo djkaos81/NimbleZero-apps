@@ -9,7 +9,7 @@ has been tested" for how far that goes.
 
 ## Install
 
-On the device (Terminal app or SSH), with Wi-Fi connected:
+**NimbleZero v0.1.0.** On the device (Terminal app or SSH), with Wi-Fi connected:
 
     wget https://github.com/djkaos81/NimbleZero-apps/raw/packages/0.1.0/nz-player_0.1.1_arm64.deb
     sudo dpkg -i nz-player_0.1.1_arm64.deb
@@ -19,6 +19,12 @@ or copy the file from a PC with `scp nz-player_0.1.1_arm64.deb zero@<device>:` f
 It appears in the launcher as **Media Player** (press R there if the list is not
 refreshed). Remove with `sudo dpkg -r nz-player`. The package needs the regular v0.1.0
 image (FFmpeg 6.1 and alsa-lib; the sound service is used when it is there).
+
+**Development images of the next version** (package set `0.2.0~dev1`): Store >
+NimbleZero apps > Media Player. The Store first downloads what the player needs (ffmpeg
+and its libraries, about a dozen packages). For sound through a sound service install
+PulseAudio or PipeWire from the Store's Dependencies as well; without one the player
+uses the sound card directly.
 
 Copy movies and channel lists to the device, for example
 `scp film.mp4 channels.m3u zero@<device>:` (that is `/home/zero`, on the data partition,
@@ -159,6 +165,14 @@ v0.1.0):
 - A comparable player on the stock firmware reached single-digit frame rates (owner's
   comparison).
 
+**Package for the next version's Store** (set `0.2.0~dev1`, 2026-11-20; emulation only):
+built against that set's libraries the program is byte for byte the one tested on the
+device. Checked: the Store's own dependency planning finds the 13 packages to download
+first; they and the player install in that order with the development image's `dpkg`;
+the image's launcher lists the player; `tests/run-tests.sh` passes on the result. Not
+checked: the Store's screens with this entry, the package layer on the data partition, and
+sound through PipeWire or without any sound service - none of it has run on a device.
+
 **Not reported from a device yet:** seek, pause, resume, track change and picture shapes
 one by one; which sound output is in use ("out:" in the overlay); a USB keyboard plugged
 in while the player runs; HTTPS streams; Wi-Fi drop-outs; long runs; battery use; the
@@ -185,8 +199,9 @@ libraries, so the build takes them from elsewhere:
 - `FFMPEG_SRC`: `ffmpeg-6.1.5.tar.xz` from the NimbleZero source archive, unpacked; only
   its header files are used.
 
-`nz-mkdeb` here is the SDK's script with one correction (the package no longer records
-mode 0700 for `/`).
+`nz-mkdeb` here is the SDK's script with two changes: the package no longer records mode
+0700 for `/`, and it writes the fields the next version's Store shows (`NZ-Title`,
+`--section`, `--description`).
 
 Test hooks, any build: `NZP_HEADLESS=1` (no screen or keyboard),
 `NZP_KEYS="down,enter,wait:2000,shot:/tmp/a.ppm,esc"` (scripted keys, pauses,
