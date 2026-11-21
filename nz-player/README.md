@@ -209,6 +209,7 @@ screenshots), `NZP_AUDIO=pulse|alsa|none`, `NZP_CONFIG_DIR`, `NZP_DEBUG=1`.
 
 ## Not in this version
 
-Subtitles, hardware video decoding (the v0.1.0 kernel has no decoder driver enabled),
+Subtitles, hardware video decoding (the chip can decode H.264 and MPEG-4 up to 1080p30,
+not HEVC; the player decodes everything in software so far),
 a way to type in a stream address on the device, favourites, programme guide (EPG),
 playlists that repeat or shuffle.
