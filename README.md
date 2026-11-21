@@ -10,7 +10,8 @@ belongs to one version of the system.
 | `0.2.0~dev1/` | development images of the next version (test builds, not a release) |
 
 Media Player (`nz-player`): GPL-2.0, source and instructions in `nz-player/` on the `main`
-branch of this repository. It links to the FFmpeg and ALSA libraries of the system and
+branch of this repository. The same program is in both sets; the two package files differ
+only in their description fields (the one in `0.2.0~dev1/` has what the Store shows). It links to the FFmpeg and ALSA libraries of the system and
 contains none of them.
 
 Snake: GPL-2.0, source `sdk/examples/snake.c` in https://github.com/djkaos81/NimbleZero.
