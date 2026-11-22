@@ -26,3 +26,63 @@ Description: Movie and IPTV player: local files and .m3u channel lists
 Filename: nz-player_0.1.1_arm64.deb
 Size: 40856
 SHA256: a6b9c6854e49ed27d6264294f28f1fc260254f35c6d1bd6b6d1cba4c96b30335
+
+Package: nz-commander
+Version: 0.2.0
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Depends: libc6 (>= 2.38)
+Installed-Size: 164
+Section: utils
+Priority: optional
+NZ-Title: NimbleCommander
+Description: File manager with two panes: copy, move, rename, delete, view
+ Copy, move, view files
+Filename: nz-commander_0.2.0_arm64.deb
+Size: 34020
+SHA256: f5a537c7be32efa1f76f382338e681207035addf191feea725170c231185587c
+
+Package: nz-edit
+Version: 0.1.0
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Depends: libc6 (>= 2.38)
+Installed-Size: 164
+Section: editors
+Priority: optional
+NZ-Title: Text Editor
+Description: Text viewer and editor: find, copy and paste, undo
+ View and edit text files
+Filename: nz-edit_0.1.0_arm64.deb
+Size: 36192
+SHA256: 30f1025697d9f849ea503835a5c3842643acc6fe9d62d68efa6fe424a3d66cbd
+
+Package: nz-image
+Version: 0.1.0
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Depends: libc6 (>= 2.38)
+Installed-Size: 164
+Section: graphics
+Priority: optional
+NZ-Title: Image Viewer
+Description: Picture viewer: zoom, turn, the other pictures of a folder
+ JPEG, PNG, BMP, GIF pictures
+Filename: nz-image_0.1.0_arm64.deb
+Size: 62120
+SHA256: 58cbc7f4032bc68df82c33450d52f5377af758159f01f0a63461386bed160ccc
+
+Package: nz-term
+Version: 0.1.0
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Depends: libc6 (>= 2.38)
+Installed-Size: 164
+Section: utils
+Priority: optional
+NZ-Title: NimbleTerm
+Description: Terminal with scrollback, three text sizes and paste
+ Terminal: scrollback, three text sizes
+Filename: nz-term_0.1.0_arm64.deb
+Size: 35320
+SHA256: 72c587b71615ca857a6ab6efd9d35fd372087f069023a4fe11e03a015d907bf1
