@@ -1,0 +1,28 @@
+Package: nz-snake
+Version: 0.2.0~dev3
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Installed-Size: 13
+Section: games
+Priority: optional
+NZ-Title: Snake
+NZ-Contents: 
+Description: Snake for the Cardputer Zero keyboard and screen
+Filename: nz-snake_0.2.0~dev3_arm64.deb
+Size: 6084
+SHA256: 2a51b0a0910c693e68d68fcc031d20489e0dc0ef5bfd8332d06228e01cbce573
+
+Package: nz-player
+Version: 0.1.1
+Architecture: arm64
+Maintainer: unknown <unknown@localhost>
+Depends: libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2
+Installed-Size: 116
+Section: video
+Priority: optional
+NZ-Title: Media Player
+Description: Movie and IPTV player: local files and .m3u channel lists
+ Movies and IPTV
+Filename: nz-player_0.1.1_arm64.deb
+Size: 40856
+SHA256: a6b9c6854e49ed27d6264294f28f1fc260254f35c6d1bd6b6d1cba4c96b30335

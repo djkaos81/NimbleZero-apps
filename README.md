@@ -9,6 +9,7 @@ belongs to one version of the system.
 | `0.1.0/` | NimbleZero v0.1.0. Its Store does not read this directory: download the `.deb` and install it with `sudo dpkg -i` |
 | `0.2.0~dev1/` | development image 1 of the next version (test builds, not a release) |
 | `0.2.0~dev2/` | development image 2 (FFmpeg 7.1). Media Player here is the same source, version 0.1.1, built against FFmpeg 7.1; the files of the other sets do not run on this image and this one not on theirs |
+| `0.2.0~dev3/` | development image 5: the same apps as `0.2.0~dev2/` (Media Player 0.1.1 built against FFmpeg 7.1, Snake) |
 
 Media Player (`nz-player`): GPL-2.0, source and instructions in `nz-player/` on the `main`
 branch of this repository. The same program is in both sets; the two package files differ
