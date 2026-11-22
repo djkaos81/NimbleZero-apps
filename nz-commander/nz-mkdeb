@@ -1,0 +1,60 @@
+#!/bin/sh
+# nz-mkdeb - package an application for NimbleZero as an ordinary .deb.
+#
+#   nz-mkdeb --name NAME --version VER --exec BINARY [--title "Menu name"] [--comment TEXT]
+#            [--terminal] [--depends "libc6 (>= 2.38), ..."] [--data DIR] [--out DIR]
+#            [--section NAME] [--description "One line for the Store"]
+#
+# Layout of the package (nothing outside these paths, so it can never collide
+# with the system image):
+#   /opt/NAME/BINARY              the program (plus the contents of --data DIR)
+#   /usr/share/applications/NAME.desktop   launcher entry (freedesktop format)
+# Install on the device with "dpkg -i NAME_VER_arm64.deb", remove with "dpkg -r NAME".
+# Needs dpkg-deb on the build host.
+set -e
+TERMINAL=false; DEPENDS="libc6 (>= 2.38)"; OUT=.; TITLE=; COMMENT=; DATA=; SECTION=misc; DESC=
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--name) NAME=$2; shift ;; --version) VER=$2; shift ;; --exec) BIN=$2; shift ;;
+	--title) TITLE=$2; shift ;; --comment) COMMENT=$2; shift ;; --terminal) TERMINAL=true ;;
+	--depends) DEPENDS=$2; shift ;; --data) DATA=$2; shift ;; --out) OUT=$2; shift ;;
+	--section) SECTION=$2; shift ;; --description) DESC=$2; shift ;;
+	*) echo "unknown option $1" >&2; exit 2 ;;
+	esac; shift
+done
+[ -n "$NAME" ] && [ -n "$VER" ] && [ -f "$BIN" ] || { sed -n '2,6p' "$0"; exit 2; }
+case "$NAME" in *[!a-z0-9+.-]*) echo "package name must be lowercase [a-z0-9+.-]" >&2; exit 2 ;; esac
+if command -v file >/dev/null && ! file "$BIN" | grep -qE 'aarch64|script|text'; then
+	echo "warning: $BIN is not an AArch64 binary or script" >&2
+fi
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+chmod 0755 "$T"    # mktemp makes it 0700, and that mode would be recorded for "/" in the package
+mkdir -p "$T/DEBIAN" "$T/opt/$NAME" "$T/usr/share/applications"
+install -m 0755 "$BIN" "$T/opt/$NAME/"
+[ -z "$DATA" ] || cp -a "$DATA"/. "$T/opt/$NAME/"
+cat > "$T/usr/share/applications/$NAME.desktop" <<D
+[Desktop Entry]
+Type=Application
+Name=${TITLE:-$NAME}
+Comment=$COMMENT
+Exec=/opt/$NAME/$(basename "$BIN")
+Path=/opt/$NAME
+Terminal=$TERMINAL
+D
+cat > "$T/DEBIAN/control" <<C
+Package: $NAME
+Version: $VER
+Architecture: arm64
+Maintainer: ${NZ_MAINTAINER:-unknown <unknown@localhost>}
+Depends: $DEPENDS
+Installed-Size: $(du -sk "$T" | cut -f1)
+Section: $SECTION
+Priority: optional
+NZ-Title: ${TITLE:-$NAME}
+Description: ${DESC:-${TITLE:-$NAME}}
+ ${COMMENT:-Cardputer Zero application}
+C
+mkdir -p "$OUT"
+# NZ-Title is the name the NimbleZero Store shows; dpkg-deb mentions it as a user-defined field
+dpkg-deb -Zzstd --root-owner-group -b "$T" "$OUT/${NAME}_${VER}_arm64.deb" >/dev/null 2>&1
+echo "$OUT/${NAME}_${VER}_arm64.deb"
