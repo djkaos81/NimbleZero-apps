@@ -1,8 +1,8 @@
 # NimbleZero-apps: package files
 
 This branch holds the apps that the NimbleZero Store offers under "NimbleZero apps": one
-directory per package set, each with a `Packages` index and `.deb` files. A package set
-belongs to one version of the system.
+directory per package set, each with a `Packages` index and `.deb` files. The Store of a
+system reads the set named in its `/etc/nz-release`.
 
 | Directory | For |
 |---|---|
@@ -10,6 +10,7 @@ belongs to one version of the system.
 | `0.2.0~dev1/` | development image 1 of the next version (test builds, not a release) |
 | `0.2.0~dev2/` | development image 2 (FFmpeg 7.1). Media Player here is the same source, version 0.1.1, built against FFmpeg 7.1; the files of the other sets do not run on this image and this one not on theirs |
 | `0.2.0~dev3/` | development image 5: the same apps as `0.2.0~dev2/` (Media Player 0.1.1 built against FFmpeg 7.1, Snake). Added 2026-11-22: NimbleCommander 0.2.0, Text Editor 0.1.0, Image Viewer 0.1.0, NimbleTerm 0.1.0 |
+| `0.2/` | development image 10 and later. Every package has its own version from here on, so a new app version is simply added here. Contents on 2026-11-22: the apps of `0.2.0~dev3/` (same files), Snake 0.2.1 |
 
 Media Player (`nz-player`): GPL-2.0, source and instructions in `nz-player/` on the `main`
 branch of this repository. The same program is in both sets; the two package files differ
