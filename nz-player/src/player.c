@@ -17,6 +17,8 @@
  */
 #include <math.h>
 #include <pthread.h>
+#include <dirent.h>
+#include <strings.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -33,6 +35,8 @@
 
 #define PQ_N        4                        /* finished pictures waiting for their time */
 #define MAX_BYTES   (32 << 20)               /* packets held at most */
+#define MAX_SUBS 16
+#define MAX_SUB_FILES 4
 #define LATE_S      0.06                     /* a frame later than this is not worth converting */
 #define MAX_AUDIO   16
 
@@ -51,6 +55,8 @@ static struct {
 	int abort, opened, failed, net, live, seekable;
 	double duration, start_time;
 	int v_idx, a_idx, a_gen, n_audio, audio_ids[MAX_AUDIO];
+	int s_idx, s_sel, n_subs, sub_ids[MAX_SUBS], n_sub_files; char sub_files[MAX_SUB_FILES][512];   /* s_sel: -1 off, then tracks in the file, then files next to it */
+	int hw_fails; int sc_down;                             /* automatic: scaling with a cheaper filter because the decoder is behind */
 	struct pktq aq, vq;
 	int serial, eof, a_done, v_done;
 	int seek_req, seek_gen; double seek_target, pos_hint;
@@ -60,10 +66,13 @@ static struct {
 	struct pic *pq; int pq_r, pq_n, shown_serial;
 	pthread_t th_read, th_audio, th_video; int has_read, has_audio, has_video;
 	int level;                               /* decoding short cuts in use, 0..4 */
+	struct hwdec *hw; int hw_active;         /* H.264 on the GPU (hwdec.c) */
 	unsigned long shown, dropped, dropped_disp, decoded, win_dec, win_late; double win_t0, win_late_sum;
 	char vcodec[24], acodec[24], alang[8], sink[8]; int vw, vh, arate, ach; double fps;
+	double br_t0, br_kbps; unsigned long br_bytes;   /* data rate of the picture stream, from its time stamps */
 } P;
 
+static double position_locked(void);
 static double now_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
 
 static void wait_ms(int ms)                  /* mutex held */
@@ -302,10 +311,9 @@ static void *audio_thread(void *arg)
 
 /* Size of the scaled picture for the chosen aspect mode; it may be larger than the screen
  * in one direction ("fill"), the part outside is cut off afterwards. */
-static void target_size(const AVFrame *f, int *dw, int *dh)
+static void target_size_wh(int fw, int fh, AVRational sar, int *dw, int *dh)
 {
-	AVRational sar = f->sample_aspect_ratio;
-	double dar = (double)f->width / f->height * (sar.num > 0 && sar.den > 0 ? av_q2d(sar) : 1.0);
+	double dar = (double)fw / fh * (sar.num > 0 && sar.den > 0 ? av_q2d(sar) : 1.0);
 	double w, h;
 	if (cfg.aspect == 2) { *dw = SCR_W; *dh = SCR_H; return; }
 	if ((dar > (double)SCR_W / SCR_H) == (cfg.aspect == 0)) { w = SCR_W; h = SCR_W / dar; }
@@ -321,18 +329,31 @@ static void target_size(const AVFrame *f, int *dw, int *dh)
 	if (*dh > 4096) *dh = 4096;
 }
 
+static void target_size(const AVFrame *f, int *dw, int *dh) { target_size_wh(f->width, f->height, f->sample_aspect_ratio, dw, dh); }
+
+/* a scaled picture (w x h, RGB565) to its place on the screen: centred, the overhang cut off, black around it */
+static void put_picture(struct pic *p, const uint8_t *src, int stride, int w, int h)
+{
+	int cw = w < SCR_W ? w : SCR_W, ch = h < SCR_H ? h : SCR_H;
+	int sx = (w - cw) / 2, sy = (h - ch) / 2, ox = (SCR_W - cw) / 2, oy = (SCR_H - ch) / 2;
+	if (cw < SCR_W || ch < SCR_H) memset(p->px, 0, sizeof(p->px));
+	for (int y = 0; y < ch; y++) memcpy(p->px + (oy + y) * SCR_W + ox, src + (size_t)(sy + y) * stride + sx * 2, (size_t)cw * 2);
+}
+
 static void apply_level(AVCodecContext *ctx, int level)
 {
 	ctx->skip_loop_filter = level >= 2 ? AVDISCARD_ALL : level == 1 ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
 	ctx->skip_frame = level >= 4 ? AVDISCARD_NONKEY : level == 3 ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
 }
 
-static void *video_thread(void *arg)
+static void video_sw(AVCodecContext *ctx)
 {
-	AVCodecContext *ctx = arg; AVFrame *fr = av_frame_alloc();
+	AVFrame *fr = av_frame_alloc();
 	struct SwsContext *sws = NULL; int sw = 0, sh = 0, sfmt = -1, sdw = 0, sdh = 0, sflags = -1, scs = -1, srange = -1;
 	uint8_t *tmp = NULL; size_t tmp_len = 0;
 	int serial = -1; double last_pts = NAN, frame_dur, last_conv = 0;
+	int resync = 0, n_skipped = 0, calm = 0, calm_need = 4, base = P.vh > 360 ? 2 : 0; double last_resync = 0, last_down = -1e9, cl = NAN;
+	int slow_ms = getenv("NZP_SLOW_SW_MS") ? atoi(getenv("NZP_SLOW_SW_MS")) : 0;
 	AVRational fps = av_guess_frame_rate(P.ic, P.ic->streams[P.v_idx], NULL);
 	frame_dur = fps.num > 0 && fps.den > 0 ? av_q2d(av_inv_q(fps)) : 0.04;
 	for (;;) {
@@ -341,28 +362,57 @@ static void *video_thread(void *arg)
 		while (!P.abort && !P.vq.n) { if (P.a_idx < 0 && !P.v_done) underrun(); wait_ms(100); }
 		if (P.abort) { pthread_mutex_unlock(&mx); break; }
 		q_get(&P.vq, &pkt, &ps);
-		/* Automatic mode: when more than a tenth of the frames of the last 3 s came out of the
-		 * decoder too late, take one more short cut; the last one (key frames only) is for
-		 * video that keeps falling behind by more than a second. */
+		/* Automatic mode, judged every 3 s.
+		 * More than a tenth of the frames came out of the decoder too late: one more short cut
+		 * (bilinear scaling, then no deblocking, then frames nothing depends on left out).
+		 * Fewer than a twentieth late for a while (12 s at first): one short cut less, down to
+		 * where this video started.  If that brings the lateness straight back, the short cut
+		 * returns and the next attempt waits twice as long (up to 5 minutes), so a video that
+		 * needs the short cut does not flicker between the two.
+		 * There is no "key frames only" step any more: a decoder that cannot keep up even with
+		 * all short cuts jumps ahead to a key frame now and then instead (see "resync"). */
 		if (cfg.speed == 0) {
 			double now = now_s();
 			if (now - P.win_t0 > 3.0) {
 				if (P.win_dec > 20 && P.win_late * 10 > P.win_dec) {
-					if (P.level < 3) P.level++;
-					else if (P.level == 3 && P.win_late_sum / P.win_late > 1.0) P.level = 4;
-					fprintf(stderr, "nz-player: decoding short cuts level %d\n", P.level);
-				}
+					if (now - last_down < 15.0 && calm_need < 100) calm_need *= 2;
+					calm = 0;
+					if (!P.sc_down && cfg.scaler >= 2) { P.sc_down = 1; fprintf(stderr, "nz-player: decoder behind: scaling with the bilinear filter from here\n"); }
+					else if (P.level < 3) { P.level++; fprintf(stderr, "nz-player: decoder behind: short cuts level %d\n", P.level); }
+				} else if (P.win_dec > 20 && P.win_late * 20 < P.win_dec) {
+					if (++calm >= calm_need && P.level > base) {
+						P.level--; calm = 0; last_down = now;
+						fprintf(stderr, "nz-player: decoder keeps up: short cuts level %d (next attempt after %d s of calm)\n", P.level, calm_need * 3);
+					}
+				} else calm = 0;
 				P.win_t0 = now; P.win_dec = P.win_late = 0; P.win_late_sum = 0;
 			}
+			if (P.level > 3) P.level = 3;
 		} else P.level = cfg.speed == 1 ? 0 : cfg.speed;
+		cl = clk_get();
 		level = P.level;
 		pthread_cond_broadcast(&cv);
 		pthread_mutex_unlock(&mx);
 		if (ps != serial) {
 			avcodec_flush_buffers(ctx); serial = ps; last_pts = NAN;
 			pthread_mutex_lock(&mx); P.win_t0 = now_s() + 2.0; P.win_dec = P.win_late = 0; P.win_late_sum = 0;
-			if (P.level == 4 && cfg.speed == 0) P.level = 3;   /* give full motion another chance */
+			resync = 0;
 			pthread_mutex_unlock(&mx);   /* the first moments after a seek do not count */
+		}
+		/* "resync": the picture is more than 1.5 s behind the sound although every short cut
+		 * is in use.  Nothing is decoded until the first key frame that lies a little ahead of
+		 * the sound; the picture stands still for that moment and then moves again, in step.
+		 * (Before 0.3.8 the player decoded key frames only from then on, for good, and beyond
+		 * ten seconds of delay stopped noticing the delay at all.) */
+		if (resync && pkt) {
+			double t = pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(ctx->pkt_timebase) : NAN;
+			if (!(pkt->flags & AV_PKT_FLAG_KEY) || isnan(t) || (!isnan(cl) && t < cl + 0.3)) {
+				n_skipped++; pthread_mutex_lock(&mx); P.dropped++; pthread_mutex_unlock(&mx);
+				av_packet_free(&pkt); continue;
+			}
+			avcodec_flush_buffers(ctx); last_pts = NAN; resync = 0;
+			fprintf(stderr, "nz-player: picture was behind the sound; left out %d frames and continued at the key frame at %.2f s\n", n_skipped, t);
+			pthread_mutex_lock(&mx); P.win_t0 = now_s() + 1.0; P.win_dec = P.win_late = 0; P.win_late_sum = 0; pthread_mutex_unlock(&mx);
 		}
 		apply_level(ctx, level);
 		if (avcodec_send_packet(ctx, pkt) < 0 && pkt) { av_packet_free(&pkt); continue; }
@@ -370,6 +420,7 @@ static void *video_thread(void *arg)
 		av_packet_free(&pkt);
 		while (avcodec_receive_frame(ctx, fr) >= 0) {
 			double pts, m, late, now; int dw, dh, slot, flags, cs, range, stale = 0;
+			if (slow_ms) usleep((useconds_t)slow_ms * 1000);   /* test hook: a processor too slow for this video */
 			struct pic *p; uint8_t *dst[4] = {0}; int dstride[4] = {0};
 			if (fr->best_effort_timestamp != AV_NOPTS_VALUE) pts = fr->best_effort_timestamp * av_q2d(ctx->pkt_timebase);
 			else pts = isnan(last_pts) ? 0 : last_pts + frame_dur;
@@ -381,7 +432,12 @@ static void *video_thread(void *arg)
 			 * changed for a while - a late picture is better than a frozen one. */
 			m = clk_get(); now = now_s();
 			late = P.clk_run && !isnan(m) && serial == P.serial ? m - pts : 0;
-			if (late > 10.0) late = 0;           /* time stamps jumped; that is not lateness */
+			if (late > 30.0) late = 0;           /* time stamps jumped; that is not lateness */
+			if (resync) { pthread_mutex_unlock(&mx); av_frame_unref(fr); continue; }   /* still coming out of the decoder; of no use now */
+			if (late > 1.5 && cfg.speed == 0 && level >= 3 && now >= P.win_t0 && now - last_resync > 4.0) {
+				resync = 1; n_skipped = 0; last_resync = now; P.dropped++;
+				pthread_mutex_unlock(&mx); av_frame_unref(fr); continue;
+			}
 			if (now >= P.win_t0) { P.win_dec++; if (late > LATE_S) { P.win_late++; P.win_late_sum += late; } }
 			if (late > LATE_S && P.shown_serial == serial && now - last_conv < 0.15) { P.dropped++; pthread_mutex_unlock(&mx); av_frame_unref(fr); continue; }
 			last_conv = now;
@@ -392,7 +448,8 @@ static void *video_thread(void *arg)
 			if (stale || fr->width <= 0 || fr->height <= 0) { av_frame_unref(fr); continue; }
 
 			target_size(fr, &dw, &dh);
-			flags = cfg.scaler == 0 ? SWS_FAST_BILINEAR : cfg.scaler == 2 ? SWS_BICUBIC : cfg.scaler == 3 ? SWS_LANCZOS : SWS_BILINEAR;
+			{ int sc = P.sc_down && cfg.speed == 0 && cfg.scaler > 1 ? 1 : cfg.scaler;   /* a fine filter only while the decoder keeps up */
+			  flags = sc == 0 ? SWS_FAST_BILINEAR : sc == 2 ? SWS_BICUBIC : sc == 3 ? SWS_LANCZOS : SWS_BILINEAR; }
 			cs = fr->colorspace != AVCOL_SPC_UNSPECIFIED ? fr->colorspace : fr->height >= 720 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
 			range = fr->color_range == AVCOL_RANGE_JPEG;
 			if (!sws || sw != fr->width || sh != fr->height || sfmt != fr->format || sdw != dw || sdh != dh || sflags != flags || scs != cs || srange != range) {
@@ -408,13 +465,10 @@ static void *video_thread(void *arg)
 			{   /* scale into a scratch buffer (swscale may write a few pixels past the end of a
 			     * line), then copy the part that is on the screen to its place, black around it */
 				int stride = (dw + 32) * 2; size_t need = (size_t)stride * (dh + 1);
-				int cw = dw < SCR_W ? dw : SCR_W, ch = dh < SCR_H ? dh : SCR_H;
-				int sx = (dw - cw) / 2, sy = (dh - ch) / 2, ox = (SCR_W - cw) / 2, oy = (SCR_H - ch) / 2;
 				if (need > tmp_len) { uint8_t *nt = av_realloc(tmp, need); if (!nt) { av_frame_unref(fr); continue; } tmp = nt; tmp_len = need; }
 				dst[0] = tmp; dstride[0] = stride;
 				sws_scale(sws, (const uint8_t *const *)fr->data, fr->linesize, 0, fr->height, dst, dstride);
-				if (cw < SCR_W || ch < SCR_H) memset(p->px, 0, sizeof(p->px));
-				for (int y = 0; y < ch; y++) memcpy(p->px + (oy + y) * SCR_W + ox, tmp + (size_t)(sy + y) * stride + sx * 2, (size_t)cw * 2);
+				put_picture(p, tmp, stride, dw, dh);
 			}
 			av_frame_unref(fr);
 			p->pts = pts; p->serial = serial;
@@ -430,6 +484,201 @@ static void *video_thread(void *arg)
 		}
 	}
 	sws_freeContext(sws); av_frame_free(&fr); av_free(tmp);
+}
+
+/* H.264: does nothing else depend on this frame?  (Every slice says so itself: two bits in
+ * its first byte.)  Such frames, usually about half of a broadcast stream, can be left out
+ * before decoding without damaging the pictures that follow. */
+static int h264_disposable(const AVPacket *pkt, const AVCodecParameters *par)
+{
+	const uint8_t *d = pkt->data; int n = pkt->size, slices = 0;
+	if (par->extradata_size >= 7 && par->extradata[0] == 1) {   /* MP4/MKV: each unit has its length in front */
+		int ls = (par->extradata[4] & 3) + 1;
+		while (n > ls) {
+			unsigned len = 0;
+			for (int i = 0; i < ls; i++) len = len << 8 | d[i];
+			d += ls; n -= ls;
+			if (!len || len > (unsigned)n) return 0;
+			if ((d[0] & 31) == 5) return 0;
+			if ((d[0] & 31) == 1) { if (d[0] & 0x60) return 0; slices++; }
+			d += len; n -= (int)len;
+		}
+	} else {                                 /* broadcast: units begin with 00 00 01 */
+		for (int i = 0; i + 3 < n; i++) {
+			if (d[i] || d[i + 1] || d[i + 2] != 1) continue;
+			if ((d[i + 3] & 31) == 5) return 0;
+			if ((d[i + 3] & 31) == 1) { if (d[i + 3] & 0x60) return 0; slices++; }
+			i += 3;
+		}
+	}
+	return slices > 0;
+}
+
+/* Collect the oldest picture the scaler is working on and queue it for the screen. */
+static int hw_collect(struct hwdec *h, double pts, int serial, int vw, int vh)
+{
+	const uint8_t *px; int stride, gw, gh, slot, stale, r = hw_scale_end(h, &px, &stride, &gw, &gh); struct pic *p;
+	if (r) return r < 0 ? -1 : 0;
+	pthread_mutex_lock(&mx);
+	while (!P.abort && serial == P.serial && P.pq_n == PQ_N) wait_ms(100);
+	stale = P.abort || serial != P.serial;
+	slot = (P.pq_r + P.pq_n) % PQ_N;
+	pthread_mutex_unlock(&mx);
+	if (stale) return 0;
+	p = &P.pq[slot];
+	put_picture(p, px, stride, gw, gh);
+	p->pts = pts; p->serial = serial;
+	pthread_mutex_lock(&mx);
+	P.vw = vw; P.vh = vh;
+	if (serial == P.serial && slot == (P.pq_r + P.pq_n) % PQ_N) { P.pq_n++; pthread_cond_broadcast(&cv); }
+	pthread_mutex_unlock(&mx);
+	return 0;
+}
+
+/* The same job with the GPU: decoder and scaler of hwdec.c.  The decoder works on its
+ * own; this loop feeds it and collects pictures.  Returns 0 when playback is being closed,
+ * -1 when the hardware failed (the caller goes on in software). */
+static int video_hw(struct hwdec *h)
+{
+	AVStream *st = P.ic->streams[P.v_idx];
+	AVRational sar = st->sample_aspect_ratio.num > 0 ? st->sample_aspect_ratio : st->codecpar->sample_aspect_ratio;
+	int serial = -1, resync = 0, need_key = 1, n_wait = 0; unsigned n_late = 0; double thin_start = 0, thin_min = 0, thin_end = 0, late_cur = 0, last_trim = 0; int thin_on = 0; long n_thin = 0, n_trim = 0;
+	int pend = 0, pend_serial = 0, pend_vw = 0, pend_vh = 0; double pend_pts = 0;   /* the picture the scaler is working on */ double last_resync = 0, clock_now = NAN;
+	for (;;) {
+		AVPacket *pkt = NULL; int ps = 0, got = 0, r; double pts;
+		pthread_mutex_lock(&mx);
+		if (P.abort) { pthread_mutex_unlock(&mx); return 0; }
+		clock_now = clk_get();
+		if (!P.vq.n && P.a_idx < 0 && !P.v_done) underrun();
+		/* not too far ahead: what waits to be played should wait in the packet queue, where the buffering logic sees it */
+		if (P.vq.n && (resync || hw_ended(h) || (hw_can_send(h) && hw_wants_more(h)))) { got = q_get(&P.vq, &pkt, &ps); pthread_cond_broadcast(&cv); }
+		pthread_mutex_unlock(&mx);
+		if (got) {
+			if (ps != serial) {
+				if (serial != -1 && hw_flush(h) < 0) { av_packet_free(&pkt); return -1; }
+				pend = 0;
+				serial = ps; need_key = 1; n_wait = 0; thin_on = 0; late_cur = 0;
+				pthread_mutex_lock(&mx); P.win_t0 = now_s() + 2.0; P.win_dec = P.win_late = 0; P.win_late_sum = 0; pthread_mutex_unlock(&mx);
+			}
+			/* Far behind the sound and not catching up: leave out everything up to the next key
+			 * frame that is not in the past, and start the decoder afresh there. */
+			if (resync && pkt) {
+				double t = pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(st->time_base) : NAN;
+				if (!(pkt->flags & AV_PKT_FLAG_KEY) || isnan(t) || (!isnan(clock_now) && t < clock_now)) { av_packet_free(&pkt); continue; }
+				if (hw_flush(h) < 0) { av_packet_free(&pkt); return -1; }
+				resync = 0; pend = 0;
+				fprintf(stderr, "nz-player: gpu: picture was behind the sound; continued at the key frame at %.2f s\n", t);
+			}
+			/* A stream joined in the middle begins with frames that cannot be decoded.  Seen on the
+			 * device: fed those, the decoder took about a hundred and then stopped answering.  So
+			 * nothing is sent before the first key frame (given up after 300 frames, for streams
+			 * that never mark one). */
+			if (need_key && pkt) {
+				if (!(pkt->flags & AV_PKT_FLAG_KEY) && ++n_wait < 300) { av_packet_free(&pkt); continue; }
+				if (n_wait) fprintf(stderr, "nz-player: gpu: left out %d frames before the first key frame\n", n_wait);
+				need_key = 0;
+			}
+			/* Behind the sound (see below).  A little behind: one frame that nothing depends on
+			 * is left out now and then, the more often the further behind (every 0.5 s at 0.04 s,
+			 * every 0.1 s at 0.12 s); a single missing picture among sixty is hard to see, and it
+			 * usually keeps the delay from growing.  Further behind: all such frames. */
+			if (pkt && (thin_on || late_cur > 0.04) && h264_disposable(pkt, st->codecpar)) {
+				double tn = now_s(), every = late_cur >= 0.12 ? 0.1 : 0.5 - (late_cur - 0.04) / 0.08 * 0.4;
+				if (thin_on || tn - last_trim >= every) {
+					if (thin_on) n_thin++; else { n_trim++; last_trim = tn; }
+					pthread_mutex_lock(&mx); P.dropped++; pthread_mutex_unlock(&mx);
+					av_packet_free(&pkt); continue;
+				}
+			}
+			r = hw_send(h, pkt);
+			av_packet_free(&pkt);
+			if (r < 0) return -1;
+		}
+		if (resync) { if (!got) hw_wait(h, 10); continue; }   /* pictures still inside the decoder are of no use now */
+		for (;;) {
+			double m, late, now; int dw, dh, vw, vh, stale;
+			r = hw_next(h, &pts);
+			if (r < 0) return -1;
+			/* nothing new from the decoder: finish the picture the scaler has */
+			if (r != 1 && pend) { pend = 0; if (hw_collect(h, pend_pts, pend_serial, pend_vw, pend_vh) < 0) return -1; }
+			if (r == 2) {
+				pthread_mutex_lock(&mx);
+				if (serial == P.serial) P.v_done = 1;
+				pthread_cond_broadcast(&cv);
+				pthread_mutex_unlock(&mx);
+				break;
+			}
+			if (r == 0) break;
+			pthread_mutex_lock(&mx);
+			P.decoded++;
+			if (!isnan(P.skip_until) && serial == P.serial && pts < P.skip_until - 0.005) { pthread_mutex_unlock(&mx); hw_skip(h); continue; }
+			m = clk_get(); now = now_s();
+			late = P.clk_run && !isnan(m) && serial == P.serial ? m - pts : 0;
+			if (late > 10.0) late = 0;
+			if (now >= P.win_t0) { P.win_dec++; if (late > LATE_S) { P.win_late++; P.win_late_sum += late; } }
+			if (late > 1.0 && now >= P.win_t0 && now - last_resync > 5.0 && !P.seekable) {   /* live: see "resync" above */
+				resync = 1; last_resync = now; P.dropped++;
+				pthread_mutex_unlock(&mx); hw_skip(h); break;
+			}
+			/* The GPU decoder is made for 1080p at 30 pictures a second.  At 60 it is at its
+			 * limit: it keeps up in calm scenes and falls a little short in busy ones, so the
+			 * picture drifts behind the sound.  Leaving out pictures after decoding does not help
+			 * (decoding is the limit), and a picture a tenth of a second late is better shown
+			 * than dropped.  So: every decoded picture is shown, single frames are left out before decoding
+			 * while the delay is small (see where packets are sent), and beyond 0.2 s the
+			 * frames nothing depends on are not decoded until the picture has caught up, which
+			 * takes well under a second; if that is needed again within 3 s, for at least twice
+			 * as long as the last time (0.5 s at first, 30 s at most). */
+			late_cur = now >= P.win_t0 ? late : 0;
+			if (!thin_on && late > 0.2 && now >= P.win_t0) {
+				thin_min = thin_end && now - thin_end < 3.0 ? (thin_min * 2 > 30.0 ? 30.0 : thin_min * 2) : 0.5;
+				thin_on = 1; thin_start = now;
+				fprintf(stderr, "nz-player: gpu: picture %.2f s behind the sound; decoding only the frames others depend on until it has caught up (at least %.1f s)\n", late, thin_min);
+			} else if (thin_on && late < 0.03 && now - thin_start >= thin_min) {
+				thin_on = 0; thin_end = now;
+				fprintf(stderr, "nz-player: gpu: caught up after %.1f s (left out so far: %ld frames in catch-ups, %ld single frames)\n", now - thin_start, n_thin, n_trim);
+			}
+			/* far behind all the same (a stream without such frames): show every second picture,
+			 * every fourth beyond half a second; "resync" above is for when even that fails */
+			if (late > 0.3 && P.shown_serial == serial && (n_late++ % (late > 0.5 ? 4 : 2))) { P.dropped++; pthread_mutex_unlock(&mx); hw_skip(h); continue; }
+			while (!P.abort && serial == P.serial && P.pq_n == PQ_N) wait_ms(100);
+			stale = P.abort || serial != P.serial;
+			pthread_mutex_unlock(&mx);
+			if (stale) { hw_skip(h); continue; }
+			hw_size(h, &vw, &vh);
+			target_size_wh(vw, vh, sar, &dw, &dh);
+			/* this picture goes to the scaler first, then the one before it is finished: its copy
+			 * and colour conversion run while the scaler is busy with this one */
+			r = hw_scale_begin(h, dw, dh);
+			if (r == 1) {
+				if (pend) { pend = 0; if (hw_collect(h, pend_pts, pend_serial, pend_vw, pend_vh) < 0) return -1; }
+				r = hw_scale_begin(h, dw, dh);
+			}
+			if (r) return -1;
+			if (pend && hw_collect(h, pend_pts, pend_serial, pend_vw, pend_vh) < 0) return -1;
+			pend = 1; pend_pts = pts; pend_serial = serial; pend_vw = vw; pend_vh = vh;
+		}
+		if (!got) hw_wait(h, 10);
+	}
+}
+
+static void *video_thread(void *arg)
+{
+	AVCodecContext *ctx = arg;               /* the software decoder: used when there is no GPU decoder for this video, or when it fails */
+	if (P.hw) {
+		int r = video_hw(P.hw);
+		hw_close(P.hw);
+		pthread_mutex_lock(&mx);
+		P.hw = NULL; P.hw_active = 0;
+		if (r < 0 && !P.abort) {
+			fprintf(stderr, "nz-player: gpu: failed; continuing with the software decoder\n");
+			P.hw_fails++;                    /* the screen says so too (the lock is held here) */
+			if (P.seekable && !P.seek_req) { P.seek_target = position_locked(); P.seek_req = 1; P.seek_gen++; }   /* start again from a key frame */
+			pthread_cond_broadcast(&cv);
+		}
+		pthread_mutex_unlock(&mx);
+		if (r < 0) video_sw(ctx);
+	} else video_sw(ctx);
 	avcodec_free_context(&ctx);
 	return NULL;
 }
@@ -444,7 +693,46 @@ static int local_hls(const char *url)
 static void choose_discard(void)
 {
 	for (unsigned i = 0; i < P.ic->nb_streams; i++)
-		P.ic->streams[i]->discard = ((int)i == P.v_idx || (int)i == P.a_idx) ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+		P.ic->streams[i]->discard = ((int)i == P.v_idx || (int)i == P.a_idx || (int)i == P.s_idx) ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+}
+
+/* Subtitle files next to a local video: the same name with another ending, or with something
+ * between the name and the ending ("film.en.srt"). */
+static void find_sub_files(void)
+{
+	static const char *ext[] = { ".srt", ".ass", ".ssa", ".vtt", ".smi", ".sub", NULL };
+	char dir[512], base[256]; const char *sl, *dot; DIR *d; struct dirent *e; size_t bl;
+	if (is_url(P.url) || !sub_text_ok()) return;
+	sl = strrchr(P.url, '/');
+	snprintf(dir, sizeof(dir), "%.*s", sl ? (int)(sl - P.url) : 1, sl ? P.url : ".");
+	if (sl && sl == P.url) snprintf(dir, sizeof(dir), "/");
+	snprintf(base, sizeof(base), "%s", sl ? sl + 1 : P.url);
+	if ((dot = strrchr(base, '.'))) base[dot - base] = 0;
+	bl = strlen(base);
+	if (!bl || !(d = opendir(dir))) return;
+	while ((e = readdir(d)) && P.n_sub_files < MAX_SUB_FILES) {
+		const char *x = strrchr(e->d_name, '.'); int ok = 0;
+		if (!x || strncasecmp(e->d_name, base, bl) || (e->d_name[bl] != '.')) continue;
+		for (int i = 0; ext[i]; i++) ok |= !strcasecmp(x, ext[i]);
+		if (ok) snprintf(P.sub_files[P.n_sub_files++], sizeof(P.sub_files[0]), "%s/%s", dir, e->d_name);
+	}
+	closedir(d);
+}
+
+/* Make track number sel (-1 = none) the active one.  Called with the lock held. */
+static int select_sub(int sel)
+{
+	sub_stop(); P.s_idx = -1; P.s_sel = -1;
+	if (sel >= 0 && sel < P.n_subs) {
+		AVStream *st = P.ic->streams[P.sub_ids[sel]];
+		if (sub_start(st->codecpar, st->time_base.num, st->time_base.den) < 0) return -1;
+		P.s_idx = P.sub_ids[sel]; P.s_sel = sel;
+	} else if (sel >= P.n_subs && sel < P.n_subs + P.n_sub_files) {
+		if (sub_load_file(P.sub_files[sel - P.n_subs]) < 0) return -1;
+		P.s_sel = sel;
+	}
+	if (P.ic) choose_discard();
+	return 0;
 }
 
 static int open_input(void)
@@ -493,6 +781,17 @@ static int open_input(void)
 			if (in) P.audio_ids[P.n_audio++] = (int)i;
 		}
 	}
+	P.s_idx = -1; P.s_sel = -1;
+	{   /* subtitle tracks of the same programme that can be shown here */
+		AVProgram *pr = v >= 0 ? av_find_program_from_stream(P.ic, NULL, v) : NULL;
+		for (unsigned i = 0; i < P.ic->nb_streams && P.n_subs < MAX_SUBS; i++) {
+			int in = !pr;
+			if (P.ic->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE) continue;
+			for (unsigned k = 0; pr && k < pr->nb_stream_indexes; k++) in |= pr->stream_index[k] == i;
+			if (in && sub_can_show(P.ic->streams[i]->codecpar)) P.sub_ids[P.n_subs++] = (int)i;
+		}
+	}
+	find_sub_files();
 	P.net = is_url(P.url) || local_hls(P.url);
 	P.duration = P.ic->duration != AV_NOPTS_VALUE && P.ic->duration > 0 ? P.ic->duration / (double)AV_TIME_BASE : 0;
 	P.live = P.duration <= 0;
@@ -506,8 +805,18 @@ static int open_input(void)
 	/* Automatic: a picture shrunk to less than half its height does not show whether the
 	 * decoder's deblocking filter ran, so it is left out from the start. */
 	P.level = cfg.speed == 0 ? (P.vh > 360 ? 2 : 0) : cfg.speed == 1 ? 0 : cfg.speed;
+	/* HEVC above 720 lines is beyond this processor at full quality (no GPU decoder for it):
+	 * begin where the automatic steps would end up anyway, without the seconds of stutter on
+	 * the way there: frames nothing depends on are not decoded, scaling is bilinear. */
+	if (cfg.speed == 0 && v >= 0 && P.ic->streams[v]->codecpar->codec_id == AV_CODEC_ID_HEVC && P.vh > 720) { P.level = 3; P.sc_down = 1; }
 	P.win_t0 = now_s();
 	pthread_mutex_unlock(&mx);
+	if (v >= 0 && hw_usable(P.ic->streams[v]->codecpar)) {
+		struct hwdec *h = hw_open(P.ic->streams[v]);
+		pthread_mutex_lock(&mx); P.hw = h; P.hw_active = h != NULL; pthread_mutex_unlock(&mx);
+		fprintf(stderr, "nz-player: gpu: %s\n", h ? "decoding and scaling this video on the GPU" : "not available for this video; decoding in software");
+	}
+	if (cfg.subs && P.n_subs + P.n_sub_files > 0) select_sub(P.n_sub_files ? P.n_subs : 0);   /* a file next to the video first */
 	choose_discard();
 	fprintf(stderr, "nz-player: %s: picture %s %dx%d, sound %s, %s, %.0f s\n", P.ic->iformat->name, v >= 0 ? P.vcodec : "none", P.vw, P.vh,
 		a >= 0 ? avcodec_get_name(P.ic->streams[a]->codecpar->codec_id) : "none", P.live ? "live" : "file", P.duration);
@@ -562,7 +871,7 @@ static void *read_thread(void *arg)
 			if (r < 0) r = av_seek_frame(P.ic, -1, ts, AVSEEK_FLAG_BACKWARD);
 			pthread_mutex_lock(&mx);
 			if (r >= 0) {
-				q_flush(&P.aq); q_flush(&P.vq);
+				q_flush(&P.aq); q_flush(&P.vq); sub_flush();
 				P.serial++; P.eof = 0; P.a_done = P.v_done = 0; drained = 0;
 				P.pq_n = 0; P.clk_pts = NAN; P.nan_since = 0; P.pos_hint = target;
 				P.skip_until = P.start_time + target; P.skip_pending = P.v_idx >= 0;
@@ -600,6 +909,16 @@ static void *read_thread(void *arg)
 				if (ts == AV_NOPTS_VALUE || P.skip_until - ts * av_q2d(P.ic->streams[idx]->time_base) > 3.0) P.skip_until = NAN;
 				P.skip_pending = 0;
 			}
+			if (idx == P.v_idx) {              /* data rate over the last second or so of video */
+				int64_t ts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
+				double t = ts != AV_NOPTS_VALUE ? ts * av_q2d(P.ic->streams[idx]->time_base) : NAN;
+				P.br_bytes += (unsigned long)pkt->size;
+				if (!isnan(t)) {
+					if (isnan(P.br_t0) || t < P.br_t0 || t - P.br_t0 > 10.0) { P.br_t0 = t; P.br_bytes = 0; }
+					else if (t - P.br_t0 >= 1.0) { P.br_kbps = P.br_bytes * 8.0 / (t - P.br_t0) / 1000.0; P.br_t0 = t; P.br_bytes = 0; }
+				}
+			}
+			if (idx == P.s_idx) sub_packet(pkt, P.ic->streams[idx]->time_base.num, P.ic->streams[idx]->time_base.den);
 			if (idx == P.a_idx || idx == P.v_idx) {
 				q_put(idx == P.a_idx ? &P.aq : &P.vq, pkt, pkt_seconds(pkt, P.ic->streams[idx]));
 				pkt = NULL;
@@ -646,6 +965,7 @@ void pl_close(void)
 	if (P.has_video) pthread_join(P.th_video, NULL);
 	P.has_read = P.has_audio = P.has_video = 0;
 	q_flush(&P.aq); q_flush(&P.vq);
+	sub_stop();
 	if (P.ic) avformat_close_input(&P.ic);
 	av_freep(&P.pq);
 	P.opened = 0; P.pq_n = 0;
@@ -720,6 +1040,50 @@ int pl_paused(void)
 	return p;
 }
 
+/* Next subtitle track (off after the last).  Returns its number, 0 for off, -1 if there are
+ * none; name gets the language or the file name. */
+int pl_cycle_subs(char *name, size_t n)
+{
+	int total, sel, r = -1; double pos;
+	if (n) name[0] = 0;
+	pthread_mutex_lock(&mx);
+	total = P.n_subs + P.n_sub_files;
+	if (P.opened && total > 0) {
+		sel = P.s_sel + 1;
+		while (sel < total && select_sub(sel) < 0) sel++;   /* one that cannot be opened is passed over */
+		if (sel >= total) { select_sub(-1); r = 0; }
+		else {
+			r = sel + 1;
+			if (sel < P.n_subs) {
+				AVDictionaryEntry *l = av_dict_get(P.ic->streams[P.sub_ids[sel]]->metadata, "language", NULL, 0), *t = av_dict_get(P.ic->streams[P.sub_ids[sel]]->metadata, "title", NULL, 0);
+				snprintf(name, n, "%s", l && strcmp(l->value, "und") ? l->value : t ? t->value : "");
+				/* its packets are read with the rest of the file: start again from here so
+				 * that the ones for this moment come by */
+				pos = position_locked();
+				if (P.seekable) { P.seek_target = pos; P.seek_req = 1; P.seek_gen++; }
+			} else { const char *f = strrchr(P.sub_files[sel - P.n_subs], '/'); snprintf(name, n, "%s", f ? f + 1 : P.sub_files[sel - P.n_subs]); }
+		}
+		pthread_cond_broadcast(&cv);
+	}
+	pthread_mutex_unlock(&mx);
+	return r;
+}
+
+static double sub_clock(int *dx, int *dy, int *dw, int *dh, int *vw, int *vh)
+{
+	double t; AVRational one = { 1, 1 };
+	pthread_mutex_lock(&mx);
+	t = P.opened && P.s_sel >= 0 ? clk_get() : NAN;
+	if (isnan(t) && P.opened && P.s_sel >= 0) t = P.start_time + P.pos_hint;   /* paused, or between a seek and the first sound */
+	*vw = P.vw; *vh = P.vh;
+	pthread_mutex_unlock(&mx);
+	if (*vw > 0 && *vh > 0) target_size_wh(*vw, *vh, one, dw, dh); else { *dw = SCR_W; *dh = SCR_H; }
+	*dx = (SCR_W - *dw) / 2; *dy = (SCR_H - *dh) / 2;
+	return t;
+}
+int pl_sub_due(void) { int a, b, c, d, e, f; double t = sub_clock(&a, &b, &c, &d, &e, &f); return isnan(t) ? 0 : sub_due(t); }
+void pl_sub_draw(uint16_t *fb, int lift) { int dx, dy, dw, dh, vw, vh; double t = sub_clock(&dx, &dy, &dw, &dh, &vw, &vh); if (!isnan(t)) sub_draw(fb, t, dx, dy, dw, dh, vw, vh, lift); }
+
 int pl_cycle_audio(void)
 {
 	int no = 0, at = 0; double pos;
@@ -728,6 +1092,7 @@ int pl_cycle_audio(void)
 		for (int i = 0; i < P.n_audio; i++) if (P.audio_ids[i] == P.a_idx) at = i;
 		at = (at + 1) % P.n_audio; no = at + 1;
 		P.a_idx = P.audio_ids[at]; P.a_gen++;
+		{ AVDictionaryEntry *l = av_dict_get(P.ic->streams[P.a_idx]->metadata, "language", NULL, 0); snprintf(P.alang, sizeof(P.alang), "%s", l ? l->value : ""); }
 		q_flush(&P.aq);
 		choose_discard();
 		pos = position_locked();
@@ -746,7 +1111,7 @@ void pl_info(struct pl_info *i)
 	snprintf(i->alang, sizeof(i->alang), "%s", P.alang); snprintf(i->sink, sizeof(i->sink), "%s", P.sink);
 	i->w = P.vw; i->h = P.vh; i->fps = P.fps; i->rate = P.arate; i->channels = P.ach;
 	i->n_audio = P.n_audio; i->level = P.level; i->net = P.net; i->live = P.live; i->seekable = P.seekable;
-	i->has_video = P.v_idx >= 0; i->has_audio = P.a_idx >= 0;
+	i->has_video = P.v_idx >= 0; i->has_audio = P.a_idx >= 0; i->hw = P.hw_active; i->v_kbps = P.br_kbps; i->hw_fails = P.hw_fails;
 	for (int k = 0; k < P.n_audio; k++) if (P.audio_ids[k] == P.a_idx) i->audio_no = k + 1;
 	i->buffered = P.opened ? (buffered() > 0 ? buffered() : 0) : 0; i->buffer_need = buffer_need();
 	i->shown = P.shown; i->dropped = P.dropped; i->dropped_disp = P.dropped_disp; i->dropped_late = P.dropped - P.dropped_disp; i->decoded = P.decoded;

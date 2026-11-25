@@ -7,8 +7,8 @@
 #include "nzp.h"
 
 struct config cfg = {
-	.buffer_ms = 3000, .reconnect = 1, .scaler = 1, .aspect = 0, .speed = 0, .seek_s = 10,
-	.resume = 1, .av_delay_ms = 0, .volume = 80, .show_info = 0,
+	.buffer_ms = 3000, .reconnect = 1, .scaler = 3, .aspect = 0, .speed = 0, .seek_s = 10,
+	.resume = 1, .av_delay_ms = 0, .volume = 80, .show_info = 0, .hwdec = 1, .subs = 0, .sub_size = 1,
 	.user_agent = "nz-player/" NZP_VERSION,
 };
 
@@ -51,6 +51,9 @@ void cfg_load(void)
 			else if (!strcmp(line, "av_delay_ms")) cfg.av_delay_ms = clampi(atoi(v), -2000, 2000);
 			else if (!strcmp(line, "volume")) cfg.volume = clampi(atoi(v), 0, 100);
 			else if (!strcmp(line, "show_info")) cfg.show_info = !!atoi(v);
+			else if (!strcmp(line, "subs")) cfg.subs = !!atoi(v);
+			else if (!strcmp(line, "sub_size")) cfg.sub_size = clampi(atoi(v), 0, 2);
+			else if (!strcmp(line, "hwdec")) cfg.hwdec = !!atoi(v);
 			else if (!strcmp(line, "user_agent") && *v) snprintf(cfg.user_agent, sizeof(cfg.user_agent), "%s", v);
 			else if (!strcmp(line, "dir_movies")) snprintf(cfg.dir[0], sizeof(cfg.dir[0]), "%s", v);
 			else if (!strcmp(line, "dir_iptv")) snprintf(cfg.dir[1], sizeof(cfg.dir[1]), "%s", v);
@@ -75,9 +78,9 @@ void cfg_save(void)
 	snprintf(p, sizeof(p), "%s/config", cfg_dir()); snprintf(tmp, sizeof(tmp), "%s.new", p);
 	if (!(f = fopen(tmp, "w"))) return;
 	fprintf(f, "buffer_ms=%d\nreconnect=%d\nscaler=%d\naspect=%d\nspeed=%d\nseek_s=%d\nresume=%d\n"
-		"av_delay_ms=%d\nvolume=%d\nshow_info=%d\nuser_agent=%s\ndir_movies=%s\ndir_iptv=%s\n",
+		"av_delay_ms=%d\nvolume=%d\nshow_info=%d\nhwdec=%d\nsubs=%d\nsub_size=%d\nuser_agent=%s\ndir_movies=%s\ndir_iptv=%s\n",
 		cfg.buffer_ms, cfg.reconnect, cfg.scaler, cfg.aspect, cfg.speed, cfg.seek_s, cfg.resume,
-		cfg.av_delay_ms, cfg.volume, cfg.show_info, cfg.user_agent, cfg.dir[0], cfg.dir[1]);
+		cfg.av_delay_ms, cfg.volume, cfg.show_info, cfg.hwdec, cfg.subs, cfg.sub_size, cfg.user_agent, cfg.dir[0], cfg.dir[1]);
 	if (fclose(f) == 0) rename(tmp, p);
 }
 

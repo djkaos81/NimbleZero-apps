@@ -134,15 +134,18 @@ static int step_in(const int *t, int n, int cur, int d)
 	return t[best];
 }
 
-enum { O_BUFFER, O_RECONNECT, O_SCALER, O_ASPECT, O_SPEED, O_SEEK, O_RESUME, O_AVDELAY, O_VOLUME, O_INFO, O_COUNT };
-static const char *opt_names[O_COUNT] = { "Stream buffer", "Reconnect live streams", "Scaling filter", "Picture shape", "Decoding",
-	"Seek step", "Resume movies", "Sound timing", "Volume", "Technical overlay" };
+enum { O_BUFFER, O_RECONNECT, O_HWDEC, O_SCALER, O_ASPECT, O_SPEED, O_SEEK, O_RESUME, O_AVDELAY, O_VOLUME, O_INFO, O_SUBS, O_SUBSIZE, O_COUNT };
+static const char *opt_names[O_COUNT] = { "Stream buffer", "Reconnect live streams", "GPU decoding", "Scaling filter", "Picture shape", "Decoding",
+	"Seek step", "Resume movies", "Sound timing", "Volume", "Technical overlay", "Subtitles at start", "Subtitle size" };
 
 static void opt_value(int o, char *b, size_t n)
 {
 	switch (o) {
 	case O_BUFFER: if (cfg.buffer_ms) snprintf(b, n, "%.1f s", cfg.buffer_ms / 1000.0); else snprintf(b, n, "Off"); break;
 	case O_RECONNECT: snprintf(b, n, "%s", cfg.reconnect ? "On" : "Off"); break;
+	case O_HWDEC: snprintf(b, n, "%s", cfg.hwdec ? "Automatic" : "Off"); break;
+	case O_SUBS: snprintf(b, n, "%s", cfg.subs ? "On" : "Off"); break;
+	case O_SUBSIZE: snprintf(b, n, "%s", cfg.sub_size == 0 ? "Small" : cfg.sub_size == 2 ? "Large" : "Normal"); break;
 	case O_SCALER: snprintf(b, n, "%s", scaler_names[cfg.scaler]); break;
 	case O_ASPECT: snprintf(b, n, "%s", aspect_names[cfg.aspect]); break;
 	case O_SPEED: snprintf(b, n, "%s", speed_names[cfg.speed]); break;
@@ -158,9 +161,10 @@ static const char *opt_help(int o)
 	switch (o) {
 	case O_BUFFER: return "Network streams: collected before play";
 	case O_RECONNECT: return "Reopen a live stream that stops";
-	case O_SCALER: return "How the picture is shrunk to the screen";
+	case O_HWDEC: return "H.264 up to 1080p; from the next video";
+	case O_SCALER: return "Software decoding only: how it shrinks";
 	case O_ASPECT: return "Key A changes this during playback";
-	case O_SPEED: return "Short cuts when the CPU cannot keep up";
+	case O_SPEED: return "Software decoding only: short cuts";
 	case O_SEEK: return "Seconds per left/right press";
 	case O_RESUME: return "Continue a movie where it was stopped";
 	case O_AVDELAY: return "Sound against picture; keys J and K";
@@ -174,6 +178,7 @@ static void opt_change(int o, int d)
 	switch (o) {
 	case O_BUFFER: cfg.buffer_ms = step_in(buf_steps, sizeof(buf_steps) / sizeof(int), cfg.buffer_ms, d); break;
 	case O_RECONNECT: cfg.reconnect = !cfg.reconnect; break;
+	case O_HWDEC: cfg.hwdec = !cfg.hwdec; break;
 	case O_SCALER: cfg.scaler = (cfg.scaler + 4 + d) % 4; break;
 	case O_ASPECT: cfg.aspect = (cfg.aspect + 3 + d) % 3; break;
 	case O_SPEED: cfg.speed = (cfg.speed + 4 + d) % 4; break;
@@ -182,6 +187,8 @@ static void opt_change(int o, int d)
 	case O_AVDELAY: cfg.av_delay_ms += d * 25; if (cfg.av_delay_ms > 1000) cfg.av_delay_ms = 1000; if (cfg.av_delay_ms < -1000) cfg.av_delay_ms = -1000; break;
 	case O_VOLUME: cfg.volume += d * 5; if (cfg.volume > 100) cfg.volume = 100; if (cfg.volume < 0) cfg.volume = 0; break;
 	case O_INFO: cfg.show_info = !cfg.show_info; break;
+	case O_SUBS: cfg.subs = !cfg.subs; break;
+	case O_SUBSIZE: cfg.sub_size = (cfg.sub_size + 3 + d) % 3; break;
 	}
 }
 
@@ -226,8 +233,8 @@ static int help_screen(void)
 		"Playing  Z/C seek       F/X volume",
 		"         Space pause    Esc back",
 		"         A picture shape   M mute",
-		"         N/P next/previous",
-		"         T sound track  I details",
+		"         N/P next/previous  I details",
+		"         T sound track  S subtitles",
 		"         J/K sound earlier/later",
 		"         1-9 jump to 10%-90%",
 		"         Enter show/hide the bar",
@@ -302,13 +309,18 @@ static void draw_info(const struct pl_info *in)
 		last_shown = in->shown; last_dec = in->decoded; last_t = t;
 		plat_present_stats(&pres_avg, &pres_max); gap_show = gap_max * 1000; gap_max = 0;
 	}
-	dim(0, 0, 8 * 33, 6 + 9 * 7);
-	if (in->has_video) nzui_text(4, y, NZUI_WHITE, "%s %dx%d %.4g fps", in->vcodec, in->w, in->h, in->fps), y += 9;
+	dim(0, 0, 8 * 35, 6 + 9 * 7);
+	if (in->has_video) {
+		if (in->v_kbps >= 1000) nzui_text(4, y, NZUI_WHITE, "%s %dx%d %.4g fps %.1f Mb/s", in->vcodec, in->w, in->h, in->fps, in->v_kbps / 1000);
+		else if (in->v_kbps > 0) nzui_text(4, y, NZUI_WHITE, "%s %dx%d %.4g fps %.0f kb/s", in->vcodec, in->w, in->h, in->fps, in->v_kbps);
+		else nzui_text(4, y, NZUI_WHITE, "%s %dx%d %.4g fps", in->vcodec, in->w, in->h, in->fps);
+		y += 9;
+	}
 	if (in->has_audio) nzui_text(4, y, NZUI_WHITE, "%s %d Hz %d ch  out:%s", in->acodec, in->rate, in->channels, in->sink), y += 9;
 	if (in->has_video) {
 		nzui_text(4, y, NZUI_WHITE, "shown %.0f/s decoded %.0f/s", fps_out, fps_dec), y += 9;
 		nzui_text(4, y, in->dropped ? C_HI : NZUI_WHITE, "skipped: late %lu, screen %lu", in->dropped_late, in->dropped_disp), y += 9;
-		nzui_text(4, y, NZUI_WHITE, "decoding: %s", lv[in->level > 4 ? 4 : in->level]), y += 9;
+		nzui_text(4, y, NZUI_WHITE, "decoding: %s", in->hw ? "GPU (and scaling)" : lv[in->level > 4 ? 4 : in->level]), y += 9;
 		nzui_text(4, y, NZUI_WHITE, "draw %.1f/%.1f ms  loop %.0f ms", pres_avg, pres_max, gap_show), y += 9;
 	}
 	nzui_text(4, y, NZUI_WHITE, "buffer %.1f s  screen:%s", in->buffered, plat_output());
@@ -330,12 +342,15 @@ static int play(const char *url, const char *title, const char *ua, const char *
 	if (start > 1) { char t[16]; fmt_time(t, sizeof(t), start, start >= 3600); snprintf(toast, sizeof(toast), "Resumed at %s  0:restart", t); toast_until = now_s() + 4; resumed = 1; }
 #define TOAST(...) do { snprintf(toast, sizeof(toast), __VA_ARGS__); toast_until = now_s() + 1.8; } while (0)
 
+	int hw_fails_seen = 0;
 	for (;;) {
 		int changed, r; double t, pos, dur;
 		st = pl_state();
 		changed = pl_refresh(vframe, &wait);
 		t = now_s();
 		pl_info(&in);
+		if (in.hw_fails > hw_fails_seen) { TOAST("GPU decoder failed: software"); toast_until = now_s() + 5.0; }
+		hw_fails_seen = in.hw_fails;
 		if (st == PL_PLAYING) { if (!opened_at) opened_at = t; if (t - opened_at > 20) { played = 1; fails = 0; } }
 
 		/* a live stream that stopped: open it again (a few times) */
@@ -348,9 +363,10 @@ static int play(const char *url, const char *title, const char *ua, const char *
 		if (retry_at && t >= retry_at) { retry_at = 0; opened_at = 0; reconnects++; pl_close(); pl_open(url, ua, ref, 0); continue; }
 
 		pos = pl_position(); dur = pl_duration();
-		if (changed || t - last_draw > 0.2) {
+		if (changed || t - last_draw > 0.2 || pl_sub_due()) {
 			int bar = osd_pinned || t < osd_until || st != PL_PLAYING || !in.has_video;
 			memcpy(nzui_fb, vframe, sizeof(vframe));
+			pl_sub_draw(nzui_fb, bar && in.has_video ? 30 : 0);   /* above the bar while it is shown */
 			if (!in.has_video && in.has_audio && st != PL_OPENING && st != PL_ERROR) {
 				nzui_clear(NZUI_BLACK);
 				for (int i = 0; i < 5; i++) {      /* a few bars so the screen is not empty */
@@ -393,7 +409,8 @@ static int play(const char *url, const char *title, const char *ua, const char *
 		case KEY_M: if (ev.value == 1) { if (muted_vol >= 0) { cfg.volume = muted_vol; muted_vol = -1; TOAST("Volume %d%%", cfg.volume); } else { muted_vol = cfg.volume; cfg.volume = 0; TOAST("Muted"); } } break;
 		case KEY_A: if (ev.value == 1) { cfg.aspect = (cfg.aspect + 1) % 3; TOAST("%s", aspect_names[cfg.aspect]); } break;
 		case KEY_I: if (ev.value == 1) cfg.show_info = !cfg.show_info; break;
-		case KEY_T: if (ev.value == 1) { int n = pl_cycle_audio(); if (n) TOAST("Sound track %d of %d", n, in.n_audio); else TOAST("One sound track"); } break;
+		case KEY_T: if (ev.value == 1) { int n = pl_cycle_audio(); if (n) { struct pl_info i2; pl_info(&i2); if (i2.alang[0]) TOAST("Sound track %d of %d (%s)", n, in.n_audio, i2.alang); else TOAST("Sound track %d of %d", n, in.n_audio); } else TOAST("One sound track"); } break;
+		case KEY_S: if (ev.value == 1) { char nm[40]; int n = pl_cycle_subs(nm, sizeof(nm)); if (n < 0) TOAST("No subtitles"); else if (!n) TOAST("Subtitles off"); else if (nm[0]) TOAST("Subtitles %d: %s", n, nm); else TOAST("Subtitles %d", n); } break;
 		case KEY_J: case KEY_K: case KEY_COMMA: case KEY_DOT:
 			cfg.av_delay_ms += ev.key == KEY_DOT || ev.key == KEY_K ? 25 : -25;
 			if (cfg.av_delay_ms > 1000) cfg.av_delay_ms = 1000;
