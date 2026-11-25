@@ -87,3 +87,18 @@ Description: Terminal with scrollback, three text sizes and paste
 Filename: nz-term_0.1.0_arm64.deb
 Size: 35320
 SHA256: 72c587b71615ca857a6ab6efd9d35fd372087f069023a4fe11e03a015d907bf1
+
+Package: nz-store
+Version: 0.2.0
+Architecture: all
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Installed-Size: 52
+Section: admin
+Priority: optional
+NZ-Title: Store
+NZ-Hidden: yes
+NZ-Needs-System: 132
+Description: The Store (update of the one the system brings)
+Filename: nz-store_0.2.0_all.deb
+Size: 11404
+SHA256: 373a090f1e1387995d13aece2bdbcbf07cae3fb8e4593a69899ceebbe9ca6882
