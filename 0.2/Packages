@@ -14,19 +14,19 @@ Size: 6104
 SHA256: f568544e9648393c292e7d1fa998c54ce3089604bc7dd3965fb38dda545824d5
 
 Package: nz-player
-Version: 0.1.1
+Version: 0.3.8
 Architecture: arm64
-Maintainer: unknown <unknown@localhost>
-Depends: libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2
-Installed-Size: 116
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Depends: libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2, fonts-dejavu-core
+Installed-Size: 160
 Section: video
 Priority: optional
 NZ-Title: Media Player
 Description: Movie and IPTV player: local files and .m3u channel lists
  Movies and IPTV
-Filename: nz-player_0.1.1_arm64.deb
-Size: 40856
-SHA256: a6b9c6854e49ed27d6264294f28f1fc260254f35c6d1bd6b6d1cba4c96b30335
+Filename: nz-player_0.3.8_arm64.deb
+Size: 65076
+SHA256: b973295b49df57296cc139f90c6297469017369bccf017e4bcae6f10e197195d
 
 Package: nz-commander
 Version: 0.2.0
