@@ -89,7 +89,7 @@ Size: 35320
 SHA256: 72c587b71615ca857a6ab6efd9d35fd372087f069023a4fe11e03a015d907bf1
 
 Package: nz-store
-Version: 0.2.0
+Version: 0.2.1
 Architecture: all
 Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
 Installed-Size: 52
@@ -99,6 +99,6 @@ NZ-Title: Store
 NZ-Hidden: yes
 NZ-Needs-System: 132
 Description: The Store (update of the one the system brings)
-Filename: nz-store_0.2.0_all.deb
-Size: 11404
-SHA256: 373a090f1e1387995d13aece2bdbcbf07cae3fb8e4593a69899ceebbe9ca6882
+Filename: nz-store_0.2.1_all.deb
+Size: 12140
+SHA256: cae047c0ee9573bb2183ec9650d0b53bccbe024cb48997694ab49ed86c64b65d
