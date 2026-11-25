@@ -16,9 +16,12 @@ Store > NimbleZero apps > Media Player. The Store first downloads what the playe
 service install PipeWire or PulseAudio from the Store's Dependencies as well; without one
 the player uses the sound card directly.
 
-It appears in the launcher as **Media Player**. GPU decoding needs `gpu_mem=128` in
-`config.txt` on the boot partition (that is what it was tried with; smaller values are
-untested).
+It appears in the launcher as **Media Player**. GPU decoding needs more GPU memory than
+the development images set: with `gpu_mem=32` the firmware cannot create the decoder and
+the player decodes in software. `gpu_mem=64` is enough (owner's report, 2026-11-25, with a 1080p video at 60
+pictures a second); the tests before that were made with 128. The line is in `config.txt` of the running system
+slot's start partition (partition 2 or 3 of the card), not on `NZBOOT`, and a system
+update puts the image's value back.
 
 **NimbleZero v0.1.0** (version 0.1.1: no GPU decoding, no subtitles). On the device
 (Terminal app or SSH), with Wi-Fi connected:
@@ -143,8 +146,10 @@ point-sampled).
 What it needs:
 
 - The kernel module `bcm2835-codec` (NimbleZero v0.1.0 and the development images load it).
-- GPU memory: tested with `gpu_mem=128` in `config.txt`. NimbleZero ships `gpu_mem=32`;
-  whether that is enough has not been established.
+- GPU memory: `gpu_mem=64` or more in `config.txt` (64 reported as enough on 2026-11-25
+  with 1080p at 60 pictures a second; most tests were made with 128). NimbleZero ships `gpu_mem=32`, with which the firmware
+  does not create the decoder (kernel log: "failed to create component
+  ril.video_decode").
 - About 20 MB of the kernel's 64 MB contiguous-memory pool while a 1080p video plays.
 
 FFmpeg's own wrapper for this kind of decoder (`h264_v4l2m2m`) is not used: on this system
@@ -289,7 +294,7 @@ Emulation (2026-11-25): the program built against package set `0.2` is byte for 
 with the set's own libass and font) passes on it.
 
 **Not reported from a device yet:** picture subtitles (DVB, PGS, DVD) and 1440x1080 video;
-installing 0.3.8 through the Store; GPU decoding with less than `gpu_mem=128`; resume and
+resume and
 track change one by one; which sound output is in use ("out:" in the overlay); a USB keyboard plugged
 in while the player runs; HTTPS streams; Wi-Fi drop-outs; long runs; battery use; the
 screen-off timer while paused; 1080p at 59.94 frames a second with 0.1.1.
