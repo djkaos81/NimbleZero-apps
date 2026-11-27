@@ -4,7 +4,7 @@ Movie and IPTV player for [NimbleZero](https://github.com/djkaos81/NimbleZero) o
 M5Stack Cardputer Zero (320x170 screen). It uses the FFmpeg libraries that are already in
 the regular NimbleZero image. Licence: GPL-2.0, like NimbleZero.
 
-Version 0.3.8, 2026-11-25, for the development images of the next NimbleZero version
+Version 0.3.10, 2026-11-27, for the development images of the next NimbleZero version
 (package set `0.2`). Tried on one Cardputer Zero step by step - see "What has been tested"
 for how far that goes. For NimbleZero v0.1.0 the package is still 0.1.1.
 
@@ -183,6 +183,11 @@ options apply to the software decoder only.
   then YU12).
 - **A message on the screen** when the GPU decoder gives up and the software decoder
   takes over ("GPU decoder failed: software"). It used to happen silently.
+- **0.3.9: too little GPU memory is named.** The player reads how much memory the GPU
+  has from the device tree. Below 64 MB it does not try the GPU decoder (with 32 the
+  firmware fails after seconds of black screen and can stay stuck) and says so once per
+  start: "Need 64MB VRAM for HW decode: Using SW". A GPU decoder that cannot be started
+  for another reason gets the "GPU decoder failed" message.
 - Overlay: data rate of the picture stream in the first line.
 - **Subtitles.** `S` steps through the subtitle tracks and off. Text formats (SRT,
   ASS/SSA, WebVTT, MP4 text and what else FFmpeg decodes) are drawn by libass with the

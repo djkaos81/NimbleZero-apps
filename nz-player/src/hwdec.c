@@ -215,6 +215,33 @@ static int isp_setup(struct hwdec *h, int w, int hgt)
 
 /* ---------------- decoder ---------------- */
 
+/* How much memory the GPU has (the gpu_mem line in config.txt), in MB; 0 if it cannot be
+ * told.  The firmware gives the kernel the rest of the board's memory and says so in the
+ * device tree; what is missing up to the next power of two is the GPU's.  (512 MB board:
+ * 480 for the processor with gpu_mem=32, 448 with 64.)
+ * Seen on the device: with 32 the firmware cannot create the video decoder ("failed to
+ * create component ril.video_decode" in the kernel log), or creates it and then never
+ * answers; with 64, 1080p at 60 pictures a second plays. */
+int hw_gpu_mem_mb(void)
+{
+	static int known = -1;
+	unsigned char b[32]; uint32_t ac = 1, sc = 1; FILE *f; size_t n; unsigned long long arm = 0, top = 1;
+	if (known >= 0) return known;
+	known = 0;
+	if (getenv("NZP_GPU_MB")) return known = atoi(getenv("NZP_GPU_MB"));   /* for tests */
+	if ((f = fopen("/proc/device-tree/#address-cells", "rb"))) { if (fread(b, 1, 4, f) == 4) ac = (uint32_t)b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]; fclose(f); }
+	if ((f = fopen("/proc/device-tree/#size-cells", "rb"))) { if (fread(b, 1, 4, f) == 4) sc = (uint32_t)b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]; fclose(f); }
+	if (ac < 1 || ac > 2 || sc < 1 || sc > 2) return 0;
+	if (!(f = fopen("/proc/device-tree/memory@0/reg", "rb"))) return 0;
+	n = fread(b, 1, sizeof(b), f); fclose(f);
+	if (n < 4 * (ac + sc)) return 0;
+	for (uint32_t i = 0; i < 4 * sc; i++) arm = arm << 8 | b[4 * ac + i];   /* the size of the first (on these boards: only) block */
+	arm >>= 20;
+	if (arm < 64 || arm > 16384) return 0;
+	while (top < arm) top <<= 1;
+	return known = (int)(top - arm);
+}
+
 /* (Re)build the picture side for the format the decoder reports. */
 static int setup_pictures(struct hwdec *h)
 {

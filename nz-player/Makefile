@@ -11,7 +11,7 @@
 #   ROOTFS         root file system of the NimbleZero image the package is for (libraries)
 #   FFMPEG_SRC     unpacked FFmpeg source of the version in that image (headers only)
 NAME    = nz-player
-VERSION = 0.3.8
+VERSION = 0.3.10
 CROSS_COMPILE ?= aarch64-linux-
 ROOTFS  ?= /path/to/rootfs
 FFMPEG_SRC ?= /path/to/ffmpeg-6.1.5

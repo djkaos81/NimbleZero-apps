@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "nzui.h"
 
-#define NZP_VERSION "0.3.8"
+#define NZP_VERSION "0.3.10"
 #define SCR_W 320
 #define SCR_H 170
 
@@ -72,6 +72,8 @@ int  hw_send(struct hwdec *h, const struct AVPacket *pkt);
 int  hw_next(struct hwdec *h, double *pts);
 void hw_skip(struct hwdec *h);
 void hw_size(struct hwdec *h, int *w, int *hgt);
+int  hw_gpu_mem_mb(void);
+#define HW_MIN_GPU_MB 64     /* GPU memory the decoder needs (gpu_mem in config.txt) */
 int  hw_scale_begin(struct hwdec *h, int w, int hgt);
 int  hw_scale_end(struct hwdec *h, const uint8_t **px, int *stride, int *got_w, int *got_h);
 int  hw_flush(struct hwdec *h);
@@ -99,6 +101,7 @@ struct pl_info {
 	char vcodec[24], acodec[24], alang[8], sink[8];
 	int w, h, rate, channels, n_audio, audio_no, level, net, live, seekable, has_video, has_audio, hw;
 	int hw_fails;      /* times the GPU decoder gave up on this video (the software decoder took over) */
+	int hw_lowmem;     /* MB of GPU memory, if that is too little for the GPU decoder and why this video is decoded in software; else 0 */
 	double fps, buffered, buffer_need, v_kbps;
 	unsigned long shown, dropped, dropped_late, dropped_disp, decoded;   /* late: out of the decoder too late; disp: the screen loop came too late */
 };

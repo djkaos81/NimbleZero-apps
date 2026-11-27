@@ -15,6 +15,7 @@
 
 struct hwdec { AVCodecContext *ctx; AVFrame *fr; struct SwsContext *sws; uint8_t *buf; int bw, bh, have, draining, ended; long n_out, fail_after; double fed, out; };
 
+int hw_gpu_mem_mb(void) { return getenv("NZP_GPU_MB") ? atoi(getenv("NZP_GPU_MB")) : 0; }
 int hw_usable(const AVCodecParameters *par) { return cfg.hwdec && getenv("NZP_FAKE_HW") && par->codec_id == AV_CODEC_ID_H264; }
 
 struct hwdec *hw_open(const AVStream *st)

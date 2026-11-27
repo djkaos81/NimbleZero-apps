@@ -342,7 +342,7 @@ static int play(const char *url, const char *title, const char *ua, const char *
 	if (start > 1) { char t[16]; fmt_time(t, sizeof(t), start, start >= 3600); snprintf(toast, sizeof(toast), "Resumed at %s  0:restart", t); toast_until = now_s() + 4; resumed = 1; }
 #define TOAST(...) do { snprintf(toast, sizeof(toast), __VA_ARGS__); toast_until = now_s() + 1.8; } while (0)
 
-	int hw_fails_seen = 0;
+	int hw_fails_seen = 0; static int lowmem_told;
 	for (;;) {
 		int changed, r; double t, pos, dur;
 		st = pl_state();
@@ -350,6 +350,7 @@ static int play(const char *url, const char *title, const char *ua, const char *
 		t = now_s();
 		pl_info(&in);
 		if (in.hw_fails > hw_fails_seen) { TOAST("GPU decoder failed: software"); toast_until = now_s() + 5.0; }
+		if (in.hw_lowmem && !lowmem_told) { TOAST("Need %dMB VRAM for HW decode: Using SW", HW_MIN_GPU_MB);   /* 38 characters: the most one line holds */ toast_until = now_s() + 6.0; lowmem_told = 1; }   /* once per start of the player */
 		hw_fails_seen = in.hw_fails;
 		if (st == PL_PLAYING) { if (!opened_at) opened_at = t; if (t - opened_at > 20) { played = 1; fails = 0; } }
 

@@ -56,7 +56,7 @@ static struct {
 	double duration, start_time;
 	int v_idx, a_idx, a_gen, n_audio, audio_ids[MAX_AUDIO];
 	int s_idx, s_sel, n_subs, sub_ids[MAX_SUBS], n_sub_files; char sub_files[MAX_SUB_FILES][512];   /* s_sel: -1 off, then tracks in the file, then files next to it */
-	int hw_fails; int sc_down;                             /* automatic: scaling with a cheaper filter because the decoder is behind */
+	int hw_fails, hw_lowmem; int sc_down;                             /* automatic: scaling with a cheaper filter because the decoder is behind */
 	struct pktq aq, vq;
 	int serial, eof, a_done, v_done;
 	int seek_req, seek_gen; double seek_target, pos_hint;
@@ -812,9 +812,17 @@ static int open_input(void)
 	P.win_t0 = now_s();
 	pthread_mutex_unlock(&mx);
 	if (v >= 0 && hw_usable(P.ic->streams[v]->codecpar)) {
-		struct hwdec *h = hw_open(P.ic->streams[v]);
-		pthread_mutex_lock(&mx); P.hw = h; P.hw_active = h != NULL; pthread_mutex_unlock(&mx);
-		fprintf(stderr, "nz-player: gpu: %s\n", h ? "decoding and scaling this video on the GPU" : "not available for this video; decoding in software");
+		int mb = hw_gpu_mem_mb();
+		if (mb > 0 && mb < HW_MIN_GPU_MB) {
+			/* not even tried: with too little memory the firmware fails in ways that cost
+			 * seconds of black screen and can leave it stuck until the next start */
+			fprintf(stderr, "nz-player: gpu: the GPU has %d MB of memory, its decoder needs %d (gpu_mem in config.txt); decoding in software\n", mb, HW_MIN_GPU_MB);
+			pthread_mutex_lock(&mx); P.hw_lowmem = mb; pthread_mutex_unlock(&mx);
+		} else {
+			struct hwdec *h = hw_open(P.ic->streams[v]);
+			pthread_mutex_lock(&mx); P.hw = h; P.hw_active = h != NULL; if (!h) P.hw_fails++; pthread_mutex_unlock(&mx);
+			fprintf(stderr, "nz-player: gpu: %s\n", h ? "decoding and scaling this video on the GPU" : "could not be started for this video; decoding in software");
+		}
 	}
 	if (cfg.subs && P.n_subs + P.n_sub_files > 0) select_sub(P.n_sub_files ? P.n_subs : 0);   /* a file next to the video first */
 	choose_discard();
@@ -1111,7 +1119,7 @@ void pl_info(struct pl_info *i)
 	snprintf(i->alang, sizeof(i->alang), "%s", P.alang); snprintf(i->sink, sizeof(i->sink), "%s", P.sink);
 	i->w = P.vw; i->h = P.vh; i->fps = P.fps; i->rate = P.arate; i->channels = P.ach;
 	i->n_audio = P.n_audio; i->level = P.level; i->net = P.net; i->live = P.live; i->seekable = P.seekable;
-	i->has_video = P.v_idx >= 0; i->has_audio = P.a_idx >= 0; i->hw = P.hw_active; i->v_kbps = P.br_kbps; i->hw_fails = P.hw_fails;
+	i->has_video = P.v_idx >= 0; i->has_audio = P.a_idx >= 0; i->hw = P.hw_active; i->v_kbps = P.br_kbps; i->hw_fails = P.hw_fails; i->hw_lowmem = P.hw_lowmem;
 	for (int k = 0; k < P.n_audio; k++) if (P.audio_ids[k] == P.a_idx) i->audio_no = k + 1;
 	i->buffered = P.opened ? (buffered() > 0 ? buffered() : 0) : 0; i->buffer_need = buffer_need();
 	i->shown = P.shown; i->dropped = P.dropped; i->dropped_disp = P.dropped_disp; i->dropped_late = P.dropped - P.dropped_disp; i->decoded = P.decoded;
