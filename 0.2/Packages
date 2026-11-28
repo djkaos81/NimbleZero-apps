@@ -1,32 +1,17 @@
 Package: nz-snake
-Version: 0.2.1
+Version: 0.2.2
 Architecture: arm64
 Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
-Installed-Size: 13
+Installed-Size: 17
 Section: games
 Priority: optional
 NZ-Title: Snake
 NZ-Contents: 
-NZ-Digest: 7de3e76bca54a0acd08db5c23da5153bd9fab0502d6ae1721f2f7151df007f2f
+NZ-Digest: 1a5a26217f4d7408c2246209f70af42dc3d46945e23ee3c7308bbc2c08875946
 Description: Snake for the Cardputer Zero keyboard and screen
-Filename: nz-snake_0.2.1_arm64.deb
-Size: 6104
-SHA256: f568544e9648393c292e7d1fa998c54ce3089604bc7dd3965fb38dda545824d5
-
-Package: nz-player
-Version: 0.3.10
-Architecture: arm64
-Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
-Depends: libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2, fonts-dejavu-core
-Installed-Size: 160
-Section: video
-Priority: optional
-NZ-Title: Media Player
-Description: Movie and IPTV player: local files and .m3u channel lists
- Movies and IPTV
-Filename: nz-player_0.3.10_arm64.deb
-Size: 64562
-SHA256: 95705aa792b1f97a36b5a3e2af0d7a29b65c5708908eb5b17b99192be700ebf4
+Filename: nz-snake_0.2.2_arm64.deb
+Size: 8576
+SHA256: a386fe99c1c253ff27c87190c96dd1f85ccfc7cd1ce3c97a78d4fc493acef75f
 
 Package: nz-commander
 Version: 0.2.0
@@ -73,20 +58,20 @@ Filename: nz-image_0.1.0_arm64.deb
 Size: 62120
 SHA256: 58cbc7f4032bc68df82c33450d52f5377af758159f01f0a63461386bed160ccc
 
-Package: nz-term
-Version: 0.1.0
+Package: nz-player
+Version: 0.3.10
 Architecture: arm64
 Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
-Depends: libc6 (>= 2.38)
-Installed-Size: 164
-Section: utils
+Depends: libc6 (>= 2.38), ffmpeg, libasound2t64 | libasound2, fonts-dejavu-core
+Installed-Size: 160
+Section: video
 Priority: optional
-NZ-Title: NimbleTerm
-Description: Terminal with scrollback, three text sizes and paste
- Terminal: scrollback, three text sizes
-Filename: nz-term_0.1.0_arm64.deb
-Size: 35320
-SHA256: 72c587b71615ca857a6ab6efd9d35fd372087f069023a4fe11e03a015d907bf1
+NZ-Title: Media Player
+Description: Movie and IPTV player: local files and .m3u channel lists
+ Movies and IPTV
+Filename: nz-player_0.3.10_arm64.deb
+Size: 64562
+SHA256: 95705aa792b1f97a36b5a3e2af0d7a29b65c5708908eb5b17b99192be700ebf4
 
 Package: nz-store
 Version: 0.2.1
@@ -102,3 +87,18 @@ Description: The Store (update of the one the system brings)
 Filename: nz-store_0.2.1_all.deb
 Size: 12140
 SHA256: cae047c0ee9573bb2183ec9650d0b53bccbe024cb48997694ab49ed86c64b65d
+
+Package: nz-term
+Version: 0.1.0
+Architecture: arm64
+Maintainer: NimbleZero <https://github.com/djkaos81/NimbleZero>
+Depends: libc6 (>= 2.38)
+Installed-Size: 164
+Section: utils
+Priority: optional
+NZ-Title: NimbleTerm
+Description: Terminal with scrollback, three text sizes and paste
+ Terminal: scrollback, three text sizes
+Filename: nz-term_0.1.0_arm64.deb
+Size: 35320
+SHA256: 72c587b71615ca857a6ab6efd9d35fd372087f069023a4fe11e03a015d907bf1
